@@ -21,11 +21,17 @@ from itertools import chain
 from threading import Thread
 import netaddr
 import sys
+import datetime
+import time
 
 flatten = lambda l: chain.from_iterable(l)
 
 def get_ctn_names():
     names = list(flatten(n['Names'] for n in dckr.containers(all=True)))
+    return [n[1:] if n[0] == '/' else n for n in names]
+
+def get_img_names():
+    names = list(flatten(n['Names'] for n in dckr.images(all=True)))
     return [n[1:] if n[0] == '/' else n for n in names]
 
 
@@ -72,7 +78,11 @@ class Container(object):
                 cls.dockerfile = insert_after_from(cls.dockerfile, 'ENV {0} {1}'.format(env, os.environ[env]))
 
         f = io.BytesIO(cls.dockerfile.encode('utf-8'))
+
         if force or not img_exists(tag):
+            if img_exists(tag):
+                print "rm image {0} ...".format(tag)
+                dckr.remove_image(tag)
             print 'build {0}...'.format(tag)
             for line in dckr.build(fileobj=f, rm=True, tag=tag, decode=True, nocache=nocache):
                 if 'stream' in line:
@@ -183,7 +193,7 @@ class Container(object):
                 if system_delta > 0.0 and cpu_delta > 0.0:
                     cpu_percentage = (cpu_delta / system_delta) * float(cpu_num) * 100.0
                 mem_usage = stat['memory_stats'].get('usage', 0)
-                queue.put({'who': self.name, 'cpu': cpu_percentage, 'mem': mem_usage})
+                queue.put({'who': self.name, 'cpu': cpu_percentage, 'mem': mem_usage, 'time': datetime.datetime.now()})
 
         t = Thread(target=stats)
         t.daemon = True

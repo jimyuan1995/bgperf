@@ -20,6 +20,7 @@ import yaml
 import json
 from threading import Thread
 import time
+import datetime
 
 class Monitor(GoBGP):
 
@@ -34,7 +35,7 @@ class Monitor(GoBGP):
                 'router-id': conf['monitor']['router-id'],
             },
         }
-        config ['neighbors'] = [{'config': {'neighbor-address': conf['target']['local-address'],
+        config['neighbors'] = [{'config': {'neighbor-address': conf['target']['local-address'],
                                             'peer-as': conf['target']['as']},
                                  'transport': {'config': {'local-address': conf['monitor']['local-address']}},
                                  'timers': {'config': {'connect-retry': 10}}}]
@@ -70,6 +71,7 @@ gobgpd -t yaml -f {1}/{2} -l {3} > {1}/gobgpd.log 2>&1
                 state = info['state']
                 if 'adj-table' in state and 'accepted' in state['adj-table'] and len(cps) > 0 and int(cps[0]) == int(state['adj-table']['accepted']):
                     cps.pop(0)
+                    info['time'] = datetime.datetime.now()
                     info['checked'] = True
                 else:
                     info['checked'] = False

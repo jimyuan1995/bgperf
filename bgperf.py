@@ -67,6 +67,7 @@ def gc_thresh3():
     #     return int(f.read().strip())
     return 200
 
+
 def doctor(args):
     ver = dckr.version()['Version']
     if ver.endswith('-ce'):
@@ -99,11 +100,20 @@ def prepare(args):
     GoBGP.build_image(args.force, nocache=args.no_cache)
     Quagga.build_image(args.force, checkout='quagga-1.0.20160309', nocache=args.no_cache)
     BIRD.build_image(args.force, nocache=args.no_cache)
-    MIRAGE.build_image(args.force, nocache=args.no_cache)
+    MIRAGE.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
     FRRouting.build_image(args.force, checkout='stable/3.0', nocache=args.no_cache)
 
 
+def clean(args):
+    for ctn_name in get_ctn_names():
+        if ctn_name.startswith("bgperf"):
+            print 'remove container', ctn_name
+            dckr.remove_container(ctn_name, force=True)
+
+
 def update(args):
+    clean(args)
+
     if args.image == 'all' or args.image == 'exabgp':
         ExaBGP.build_image(True, checkout=args.checkout, nocache=args.no_cache)
     if args.image == 'all' or args.image == 'exabgp_mrtparse':
@@ -115,6 +125,8 @@ def update(args):
     if args.image == 'all' or args.image == 'bird':
         BIRD.build_image(True, checkout=args.checkout, nocache=args.no_cache)
     if args.image == 'all' or args.image == 'mirage':
+        if args.checkout == "HEAD":
+            args.checkout = "bgperf"
         MIRAGE.build_image(True, checkout=args.checkout, nocache=args.no_cache)
     if args.image == 'all' or args.image == 'frr':
         FRRouting.build_image(True, checkout=args.checkout, nocache=args.no_cache)
@@ -294,6 +306,12 @@ def bench(args):
     print 'waiting bgp connection between {0} and monitor'.format(args.target)
     m.wait_established(conf['target']['local-address'])
 
+    q = Queue()
+    start = datetime.datetime.now()
+    m.stats(q)
+    if not is_remote:
+        target.stats(q)
+
     if not args.repeat:
         for idx, tester in enumerate(conf['testers']):
             if 'name' not in tester:
@@ -325,14 +343,6 @@ def bench(args):
             print 'run tester', name, 'type', tester_type
             t.run(conf['target'], dckr_net_name)
 
-    start = datetime.datetime.now()
-
-    q = Queue()
-
-    m.stats(q)
-    if not is_remote:
-        target.stats(q)
-
     def mem_human(v):
         if v > 1000 * 1000 * 1000:
             return '{0:.2f}GB'.format(float(v) / (1000 * 1000 * 1000))
@@ -344,27 +354,33 @@ def bench(args):
             return '{0:.2f}B'.format(float(v))
 
     f = open(args.output, 'w') if args.output else None
-    cpu = 0
-    mem = 0
+    cpu = 0.0
+    mem = 0.0
     cooling = -1
+    recved = 0
+    end = datetime.datetime.now()
     while True:
         info = q.get()
 
         if not is_remote and info['who'] == target.name:
-            cpu = info['cpu']
-            mem = info['mem']
+            cpu += info['cpu']
+            mem = max(info['mem'], mem)
+            elapsed = info['time'] - start
+
+            print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
+
+            # f.write('elapsed: {0}.{1} s, cpu: {2:>4.2f}%, mem: {3}, recved: {4}'.format(elapsed.seconds,
+            #                                                         elapsed.microseconds, cpu, mem_human(mem), recved)) if f else None
+            # f.flush() if f else None
 
         if info['who'] == m.name:
-            now = datetime.datetime.now()
-            elapsed = now - start
+            # if elapsed.seconds > 0:
+            #     rm_line()
+
             recved = info['state']['adj-table']['accepted'] if 'accepted' in info['state']['adj-table'] else 0
-            if elapsed.seconds > 0:
-                rm_line()
-            print 'elapsed: {0}sec, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed.seconds, cpu, mem_human(mem), recved)
-            f.write('{0}, {1}, {2}, {3}\n'.format(elapsed.seconds, cpu, mem, recved)) if f else None
-            f.flush() if f else None
 
             if cooling == args.cooling:
+                print 'total time: {0}, total CPU: {1:>4.2f}, max MEM: {2}'.format(end - start, cpu, mem_human(mem))
                 f.close() if f else None
                 return
 
@@ -372,7 +388,9 @@ def bench(args):
                 cooling += 1
 
             if info['checked']:
+                end = info['time']
                 cooling = 0
+
 
 def gen_conf(args):
     neighbor_num = args.neighbor_num
@@ -521,10 +539,13 @@ if __name__ == '__main__':
     parser_prepare.set_defaults(func=prepare)
 
     parser_update = s.add_parser('update', help='rebuild bgp docker images')
-    parser_update.add_argument('image', choices=['exabgp', 'exabgp_mrtparse', 'gobgp', 'bird', 'quagga', 'frr', 'all'])
+    parser_update.add_argument('image', choices=['exabgp', 'exabgp_mrtparse', 'gobgp', 'bird', 'quagga', 'frr', 'mirage', 'all'])
     parser_update.add_argument('-c', '--checkout', default='HEAD')
     parser_update.add_argument('-n', '--no-cache', action='store_true')
     parser_update.set_defaults(func=update)
+
+    parser_clean = s.add_parser('clean', help='clean bgperf docker images')
+    parser_clean.set_defaults(func=clean)
 
     def add_gen_conf_args(parser):
         parser.add_argument('-n', '--neighbor-num', default=100, type=int)

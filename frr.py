@@ -79,7 +79,7 @@ bgp router-id {1}
         def gen_neighbor_config(n):
             local_addr = n['local-address']
             c = """neighbor {0} remote-as {1}
-neighbor {0} advertisement-interval 1
+neighbor {0} advertisement-interval 0
 neighbor {0} route-server-client
 neighbor {0} timers 30 90
 """.format(local_addr, n['as']) # adjust BGP hold-timers if desired
