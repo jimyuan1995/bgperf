@@ -36,6 +36,7 @@ from bird import BIRD, BIRDTarget
 from quagga import Quagga, QuaggaTarget
 from frr import FRRouting, FRRoutingTarget
 from mirage import MIRAGE, MIRAGETarget
+from mirage_st import MIRAGE_ST, MIRAGESTTarget
 from tester import ExaBGPTester
 from mrt_tester import GoBGPMRTTester, ExaBGPMrtTester
 from monitor import Monitor
@@ -101,6 +102,7 @@ def prepare(args):
     Quagga.build_image(args.force, checkout='quagga-1.0.20160309', nocache=args.no_cache)
     BIRD.build_image(args.force, nocache=args.no_cache)
     MIRAGE.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
+    MIRAGE_ST.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
     FRRouting.build_image(args.force, checkout='stable/3.0', nocache=args.no_cache)
 
 
@@ -128,6 +130,10 @@ def update(args):
         if args.checkout == "HEAD":
             args.checkout = "bgperf"
         MIRAGE.build_image(True, checkout=args.checkout, nocache=args.no_cache)
+    if args.image == 'all' or args.image == 'mirage_st':
+        if args.checkout == "HEAD":
+            args.checkout = "bgperf"
+        MIRAGE_ST.build_image(True, checkout=args.checkout, nocache=args.no_cache)
     if args.image == 'all' or args.image == 'frr':
         FRRouting.build_image(True, checkout=args.checkout, nocache=args.no_cache)
 
@@ -136,7 +142,7 @@ def bench(args):
     config_dir = '{0}/{1}'.format(args.dir, args.bench_name)
     dckr_net_name = args.docker_network_name or args.bench_name + '-br'
 
-    for target_class in [BIRDTarget, GoBGPTarget, QuaggaTarget, FRRoutingTarget, MIRAGETarget]:
+    for target_class in [BIRDTarget, GoBGPTarget, QuaggaTarget, FRRoutingTarget, MIRAGETarget, MIRAGESTTarget]:
         if ctn_exists(target_class.CONTAINER_NAME):
             print 'removing target container', target_class.CONTAINER_NAME
             dckr.remove_container(target_class.CONTAINER_NAME, force=True)
@@ -293,6 +299,8 @@ def bench(args):
             target_class = FRRoutingTarget
         elif args.target == 'mirage':
             target_class = MIRAGETarget
+        elif args.target == 'mirage_st':
+            target_class = MIRAGESTTarget
 
         print 'run', args.target
         if args.image:
@@ -539,7 +547,7 @@ if __name__ == '__main__':
     parser_prepare.set_defaults(func=prepare)
 
     parser_update = s.add_parser('update', help='rebuild bgp docker images')
-    parser_update.add_argument('image', choices=['exabgp', 'exabgp_mrtparse', 'gobgp', 'bird', 'quagga', 'frr', 'mirage', 'all'])
+    parser_update.add_argument('image', choices=['exabgp', 'exabgp_mrtparse', 'gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st', 'all'])
     parser_update.add_argument('-c', '--checkout', default='HEAD')
     parser_update.add_argument('-n', '--no-cache', action='store_true')
     parser_update.set_defaults(func=update)
@@ -572,7 +580,7 @@ if __name__ == '__main__':
                             help='monitor\' router ID; default: same as --monitor-local-address')
 
     parser_bench = s.add_parser('bench', help='run benchmarks')
-    parser_bench.add_argument('-t', '--target', choices=['gobgp', 'bird', 'quagga', 'frr', 'mirage'], default='gobgp')
+    parser_bench.add_argument('-t', '--target', choices=['gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st'], default='gobgp')
     parser_bench.add_argument('-i', '--image', help='specify custom docker image')
     parser_bench.add_argument('--docker-network-name', help='Docker network name; this is the name given by \'docker network ls\'')
     parser_bench.add_argument('--bridge-name', help='Linux bridge name of the '
