@@ -21,6 +21,7 @@ import sys
 import yaml
 import time
 import shutil
+import copy
 import netaddr
 import datetime
 from argparse import ArgumentParser, REMAINDER
@@ -45,6 +46,7 @@ from Queue import Queue
 from mako.template import Template
 from packaging import version
 from docker.types import IPAMConfig, IPAMPool
+from throughput import Throughput, ThroughputTarget
 
 def gen_mako_macro():
     return '''<%
@@ -134,11 +136,164 @@ def update(args):
         if args.checkout == "HEAD":
             args.checkout = "bgperf"
         MIRAGE_ST.build_image(True, checkout=args.checkout, nocache=args.no_cache)
+    if args.image == 'all' or args.image == 'throughput':
+        if args.checkout == "HEAD":
+            args.checkout = "feature-integrate-test"
+        ThroughputTarget.build_image(True, checkout=args.checkout, nocache=args.no_cache)
     if args.image == 'all' or args.image == 'frr':
         FRRouting.build_image(True, checkout=args.checkout, nocache=args.no_cache)
 
 
-def bench(args):
+def two_peer_test(args):
+    args.neighbor_num = 2
+
+    RELAY_PREFIX = 'bgperf_relay_'
+
+    config_dir = '{0}/{1}'.format(args.dir, args.bench_name)
+    dckr_net_name = args.docker_network_name or args.bench_name + '-br'
+
+    for target_class in [BIRDTarget, GoBGPTarget, QuaggaTarget, FRRoutingTarget, MIRAGETarget, MIRAGESTTarget]:
+        if ctn_exists(target_class.CONTAINER_NAME):
+            print 'removing target container', target_class.CONTAINER_NAME
+            dckr.remove_container(target_class.CONTAINER_NAME, force=True)
+
+    if not args.repeat:
+        if ctn_exists(Monitor.CONTAINER_NAME):
+            print 'removing monitor container', Monitor.CONTAINER_NAME
+            dckr.remove_container(Monitor.CONTAINER_NAME, force=True)
+
+        for ctn_name in get_ctn_names():
+            if ctn_name.startswith("bgperf_"):
+                print 'removing container', ctn_name
+                dckr.remove_container(ctn_name, force=True)
+
+        for ctn_name in get_ctn_names():
+            if ctn_name.startswith(RELAY_PREFIX):
+                print 'removing relay container', ctn_name
+                dckr.remove_container(ctn_name, force=True)
+
+        for ctn_name in get_ctn_names():
+            if ctn_name.startswith("bgperf_throughput_tester"):
+                print 'removing throughput tester container', ctn_name
+                dckr.remove_container(ctn_name, force=True)
+
+        if os.path.exists(config_dir):
+            shutil.rmtree(config_dir)
+
+    if args.file:
+        with open(args.file) as f:
+            conf = yaml.load(Template(f.read()).render())
+    else:
+        conf = gen_conf(args)
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir)
+        with open('{0}/scenario.yaml'.format(config_dir), 'w') as f:
+            f.write(conf)
+        conf = yaml.load(Template(conf).render())
+
+    bridge_found = False
+    for network in dckr.networks(names=[dckr_net_name]):
+        if network['Name'] == dckr_net_name:
+            print 'Docker network "{}" already exists'.format(dckr_net_name)
+            bridge_found = True
+            break
+    if not bridge_found:
+        print "subnet does not exist"
+        exit(1)
+
+    if args.target == 'gobgp':
+        target_class = GoBGPTarget
+    elif args.target == 'bird':
+        target_class = BIRDTarget
+    elif args.target == 'quagga':
+        target_class = QuaggaTarget
+    elif args.target == 'frr':
+        target_class = FRRoutingTarget
+    elif args.target == 'mirage':
+        target_class = MIRAGETarget
+    elif args.target == 'mirage_st':
+        target_class = MIRAGESTTarget
+
+    print 'run', args.target
+    target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'])
+    target.run(conf, dckr_net_name)
+
+    time.sleep(3)
+
+    print 'run relays'
+
+    def run_relay(name, ip, listen, talk, dckr_net_name='', rm=True):
+        if rm and ctn_exists(name):
+            print 'remove relay containers:', name
+            dckr.remove_container(name, force=True)
+
+        ctn = dckr.create_container(
+            image='sproxy', detach=True, name=name,
+            environment=['LISTEN={0}'.format(listen), 'TALK={0}'.format(talk)]
+        )
+        ctn_id = ctn['Id']
+
+        ipv4_addresses = [ip]
+
+        net_id = None
+        for network in dckr.networks(names=[dckr_net_name]):
+            if network['Name'] != dckr_net_name:
+                continue
+
+            net_id = network['Id']
+            if not 'IPAM' in network:
+                print('can\'t verify if container\'s IP addresses '
+                      'are valid for Docker network {}: missing IPAM'.format(dckr_net_name))
+                break
+            ipam = network['IPAM']
+
+            if not 'Config' in ipam:
+                print('can\'t verify if container\'s IP addresses '
+                      'are valid for Docker network {}: missing IPAM.Config'.format(dckr_net_name))
+                break
+
+            ip_ok = False
+            network_subnets = [item['Subnet'] for item in ipam['Config'] if 'Subnet' in item]
+
+            for ip in ipv4_addresses:
+                for subnet in network_subnets:
+                    ip_ok = netaddr.IPAddress(ip) in netaddr.IPNetwork(subnet)
+
+                if not ip_ok:
+                    print('the container\'s IP address {} is not valid for Docker network {} '
+                          'since it\'s not part of any of its subnets ({})'.format(
+                        ip, dckr_net_name, ', '.join(network_subnets)))
+                    print('Please consider removing the Docket network {net} '
+                          'to allow bgperf to create it again using the '
+                          'expected subnet:\n'
+                          '  docker network rm {net}'.format(net=dckr_net_name))
+                    sys.exit(1)
+            break
+
+        if net_id is None:
+            print 'Docker network "{}" not found!'.format(dckr_net_name)
+            return
+
+        dckr.connect_container_to_network(ctn_id, net_id, ipv4_address=ipv4_addresses[0])
+        dckr.start(container=name)
+
+        return ctn
+
+    run_relay(RELAY_PREFIX + '1', '10.10.0.3', ':50001', '{}:179'.format(conf['target']['local-address']),
+              'bgperf-br'
+              )
+
+    run_relay(RELAY_PREFIX + '2', '10.10.0.4', ':50002', '{}:179'.format(conf['target']['local-address']),
+              'bgperf-br'
+              )
+
+    print 'run throughput tester'
+    throughput = ThroughputTarget('{0}/{1}'.format(config_dir, 'throughput'), {})
+    throughput.run(conf, dckr_net_name)
+
+
+
+def multitest(args):
     config_dir = '{0}/{1}'.format(args.dir, args.bench_name)
     dckr_net_name = args.docker_network_name or args.bench_name + '-br'
 
@@ -157,6 +312,16 @@ def bench(args):
                 ctn_name.startswith(ExaBGPMrtTester.CONTAINER_NAME_PREFIX) or \
                 ctn_name.startswith(GoBGPMRTTester.CONTAINER_NAME_PREFIX):
                 print 'removing tester container', ctn_name
+                dckr.remove_container(ctn_name, force=True)
+
+        for ctn_name in get_ctn_names():
+            if ctn_name.startswith("bgperf_relay_"):
+                print 'removing relay container', ctn_name
+                dckr.remove_container(ctn_name, force=True)
+
+        for ctn_name in get_ctn_names():
+            if ctn_name.startswith("bgperf_throughput_tester"):
+                print 'removing throughput tester container', ctn_name
                 dckr.remove_container(ctn_name, force=True)
 
         if os.path.exists(config_dir):
@@ -375,7 +540,8 @@ def bench(args):
             mem = max(info['mem'], mem)
             elapsed = info['time'] - start
 
-            print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
+            if args.verbose:
+                print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
 
             # f.write('elapsed: {0}.{1} s, cpu: {2:>4.2f}%, mem: {3}, recved: {4}'.format(elapsed.seconds,
             #                                                         elapsed.microseconds, cpu, mem_human(mem), recved)) if f else None
@@ -398,6 +564,12 @@ def bench(args):
             if info['checked']:
                 end = info['time']
                 cooling = 0
+
+
+def bench(args):
+    backup = copy.deepcopy(args)
+    two_peer_test(args)
+    multitest(backup)
 
 
 def gen_conf(args):
@@ -526,6 +698,8 @@ def gen_conf(args):
     return gen_mako_macro() + yaml.dump(conf, default_flow_style=False)
 
 
+
+
 def config(args):
     conf = gen_conf(args)
 
@@ -547,7 +721,7 @@ if __name__ == '__main__':
     parser_prepare.set_defaults(func=prepare)
 
     parser_update = s.add_parser('update', help='rebuild bgp docker images')
-    parser_update.add_argument('image', choices=['exabgp', 'exabgp_mrtparse', 'gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st', 'all'])
+    parser_update.add_argument('image', choices=['exabgp', 'exabgp_mrtparse', 'gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st', 'all', 'throughput'])
     parser_update.add_argument('-c', '--checkout', default='HEAD')
     parser_update.add_argument('-n', '--no-cache', action='store_true')
     parser_update.set_defaults(func=update)
@@ -579,6 +753,40 @@ if __name__ == '__main__':
         parser.add_argument('--monitor-router-id', type=str,
                             help='monitor\' router ID; default: same as --monitor-local-address')
 
+    parser_two_peer = s.add_parser('2peer', help='two_peer benchmark')
+    parser_two_peer.add_argument('-t', '--target', choices=['gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st'],
+                              default='gobgp')
+    parser_two_peer.add_argument('--docker-network-name',
+                              help='Docker network name; this is the name given by \'docker network ls\'')
+    parser_two_peer.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
+    parser_two_peer.add_argument('-f', '--file', metavar='CONFIG_FILE')
+    parser_two_peer.add_argument('-g', '--cooling', default=0, type=int)
+    parser_two_peer.add_argument('-o', '--output', metavar='STAT_FILE')
+    add_gen_conf_args(parser_two_peer)
+
+    parser_two_peer.set_defaults(func=two_peer_test)
+
+    parser_multi_test = s.add_parser('multi_test', help='run multitest benchmarks')
+    parser_multi_test.add_argument('-t', '--target', choices=['gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st'],
+                              default='gobgp')
+    parser_multi_test.add_argument('-i', '--image', help='specify custom docker image')
+    parser_multi_test.add_argument('--docker-network-name',
+                              help='Docker network name; this is the name given by \'docker network ls\'')
+    parser_multi_test.add_argument('--bridge-name', help='Linux bridge name of the '
+                                                    'interface corresponding to the Docker network; '
+                                                    'use this argument only if bgperf can\'t '
+                                                    'determine the Linux bridge name starting from '
+                                                    'the Docker network name in case of tests of '
+                                                    'remote targets.')
+    parser_multi_test.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
+    parser_multi_test.add_argument('-f', '--file', metavar='CONFIG_FILE')
+    parser_multi_test.add_argument('-g', '--cooling', default=0, type=int)
+    parser_multi_test.add_argument('-o', '--output', metavar='STAT_FILE')
+    parser_multi_test.add_argument('-v', '--verbose', default=False)
+    add_gen_conf_args(parser_multi_test)
+    parser_multi_test.set_defaults(func=multitest)
+
+
     parser_bench = s.add_parser('bench', help='run benchmarks')
     parser_bench.add_argument('-t', '--target', choices=['gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st'], default='gobgp')
     parser_bench.add_argument('-i', '--image', help='specify custom docker image')
@@ -593,6 +801,7 @@ if __name__ == '__main__':
     parser_bench.add_argument('-f', '--file', metavar='CONFIG_FILE')
     parser_bench.add_argument('-g', '--cooling', default=0, type=int)
     parser_bench.add_argument('-o', '--output', metavar='STAT_FILE')
+    parser_bench.add_argument('-v', '--verbose', default=False)
     add_gen_conf_args(parser_bench)
     parser_bench.set_defaults(func=bench)
 

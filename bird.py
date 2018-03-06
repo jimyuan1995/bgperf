@@ -85,7 +85,7 @@ protocol pipe pipe_{0} {{
     rs client;
 }}
 '''.format(n['as'], self.conf['as'], n['local-address'], 'secondary' if self.conf['single-table'] else 'table table_{0}'.format(n['as']))
-            return n1 + n2
+
 
         def gen_prefix_filter(name, match):
             return '''function {0}()
