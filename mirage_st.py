@@ -120,7 +120,8 @@ class MIRAGESTTarget(MIRAGE_ST, Target):
     def get_startup_cmd(self):
         return '\n'.join(
             ['#!/bin/bash',
-             'OCAML_SPACETIME_INTERVAL=100 Mirage-BGP/src/bgpd/bgpd --config {guest_dir}/{config_file_name} &',
+             'cd {guest_dir}/',
+             'sudo OCAML_SPACETIME_INTERVAL=100 ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test true --runtime 90 &',
              'disown -ah'
             ]
         ).format(

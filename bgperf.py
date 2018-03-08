@@ -287,10 +287,39 @@ def two_peer_test(args):
               'bgperf-br'
               )
 
+    q = Queue()
+    target.stats(q)
+
     print 'run throughput tester'
+
     throughput = ThroughputTarget('{0}/{1}'.format(config_dir, 'throughput'), {})
     throughput.run(conf, dckr_net_name)
 
+    def mem_human(v):
+        if v > 1000 * 1000 * 1000:
+            return '{0:.2f}GB'.format(float(v) / (1000 * 1000 * 1000))
+        elif v > 1000 * 1000:
+            return '{0:.2f}MB'.format(float(v) / (1000 * 1000))
+        elif v > 1000:
+            return '{0:.2f}KB'.format(float(v) / 1000)
+        else:
+            return '{0:.2f}B'.format(float(v))
+
+    cpu = 0.0
+    mem = 0.0
+
+    while not q.empty():
+        info = q.get()
+        if info['who'] == target.name:
+            cpu += info['cpu']
+            mem = max(info['mem'], mem)
+
+            if args.verbose:
+                print 'cpu: {0:>4.2f}%, mem: {1}, recved: {2}'.format(info['cpu'], mem_human(info['mem']), recved)
+
+    print 'total CPU: {0:>4.2f}, max MEM: {1}'.format(cpu, mem_human(mem))
+
+    return
 
 
 def multitest(args):
@@ -762,6 +791,7 @@ if __name__ == '__main__':
     parser_two_peer.add_argument('-f', '--file', metavar='CONFIG_FILE')
     parser_two_peer.add_argument('-g', '--cooling', default=0, type=int)
     parser_two_peer.add_argument('-o', '--output', metavar='STAT_FILE')
+    parser_two_peer.add_argument('-v', '--verbose', default=False)
     add_gen_conf_args(parser_two_peer)
 
     parser_two_peer.set_defaults(func=two_peer_test)

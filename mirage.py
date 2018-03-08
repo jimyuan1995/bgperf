@@ -121,10 +121,13 @@ class MIRAGETarget(MIRAGE, Target):
     def get_startup_cmd(self):
         return '\n'.join(
             ['#!/bin/bash',
-             'sudo Mirage-BGP/src/bgpd/bgpd --config {guest_dir}/{config_file_name} &',
+             'cd {guest_dir}/',
+             'sudo ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test true --runtime 90 &',
              'disown -ah'
             ]
         ).format(
             guest_dir=self.guest_dir,
             config_file_name=self.CONFIG_FILE_NAME
         )
+
+
