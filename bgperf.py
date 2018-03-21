@@ -306,18 +306,25 @@ def two_peer_test(args):
             return '{0:.2f}B'.format(float(v))
 
     cpu = 0.0
+    max_mem = 0.0
     mem = 0.0
 
-    while not q.empty():
+    cooling = args.cooling
+
+    while cooling >= 0:
+        if q.empty():
+            cooling -= 1
+
         info = q.get()
-        if info['who'] == target.name:
-            cpu += info['cpu']
-            mem = max(info['mem'], mem)
 
-            if args.verbose:
-                print 'cpu: {0:>4.2f}%, mem: {1}, recved: {2}'.format(info['cpu'], mem_human(info['mem']), recved)
+        cpu += info['cpu']
+        mem += info['mem']
+        max_mem = max(info['mem'], max_mem)
 
-    print 'total CPU: {0:>4.2f}, max MEM: {1}'.format(cpu, mem_human(mem))
+        if args.verbose:
+            print 'cpu: {0:>4.2f}%, mem: {1}'.format(info['cpu'], mem_human(info['mem']))
+
+    print 'total CPU: {0:>4.2f}, max MEM: {1}, total mem {2}'.format(cpu, mem_human(max_mem), mem_human(mem))
 
     return
 
@@ -555,44 +562,45 @@ def multitest(args):
         else:
             return '{0:.2f}B'.format(float(v))
 
-    f = open(args.output, 'w') if args.output else None
+    # Performance measurement
     cpu = 0.0
+    max_mem = 0.0
     mem = 0.0
-    cooling = -1
+
+    # Allow CPU/Memory usage to cool down
+    cooling = args.cooling
+
+    # Count of received prefixes
     recved = 0
+
+    is_done = False
+
     end = datetime.datetime.now()
-    while True:
+
+    while cooling >= 0:
         info = q.get()
 
         if not is_remote and info['who'] == target.name:
             cpu += info['cpu']
-            mem = max(info['mem'], mem)
+            mem += info['mem']
+            max_mem = max(info['mem'], max_mem)
             elapsed = info['time'] - start
 
             if args.verbose:
                 print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
 
-            # f.write('elapsed: {0}.{1} s, cpu: {2:>4.2f}%, mem: {3}, recved: {4}'.format(elapsed.seconds,
-            #                                                         elapsed.microseconds, cpu, mem_human(mem), recved)) if f else None
-            # f.flush() if f else None
-
         if info['who'] == m.name:
-            # if elapsed.seconds > 0:
-            #     rm_line()
-
             recved = info['state']['adj-table']['accepted'] if 'accepted' in info['state']['adj-table'] else 0
 
-            if cooling == args.cooling:
-                print 'total time: {0}, total CPU: {1:>4.2f}, max MEM: {2}'.format(end - start, cpu, mem_human(mem))
-                f.close() if f else None
-                return
-
-            if cooling >= 0:
-                cooling += 1
-
-            if info['checked']:
+            if info['checked'] and (not is_done):
+                is_done = True
                 end = info['time']
-                cooling = 0
+
+            if is_done:
+                cooling -= 1
+
+    # Final performance measurement output
+    print 'total time: {0}, total CPU: {1:>4.2f}, max MEM: {2}'.format(end - start, cpu, mem_human(max_mem))
 
 
 def bench(args):
@@ -789,7 +797,7 @@ if __name__ == '__main__':
                               help='Docker network name; this is the name given by \'docker network ls\'')
     parser_two_peer.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
     parser_two_peer.add_argument('-f', '--file', metavar='CONFIG_FILE')
-    parser_two_peer.add_argument('-g', '--cooling', default=0, type=int)
+    parser_two_peer.add_argument('-g', '--cooling', default=5, type=int)
     parser_two_peer.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_two_peer.add_argument('-v', '--verbose', default=False)
     add_gen_conf_args(parser_two_peer)
@@ -810,7 +818,7 @@ if __name__ == '__main__':
                                                     'remote targets.')
     parser_multi_test.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
     parser_multi_test.add_argument('-f', '--file', metavar='CONFIG_FILE')
-    parser_multi_test.add_argument('-g', '--cooling', default=0, type=int)
+    parser_multi_test.add_argument('-g', '--cooling', default=5, type=int)
     parser_multi_test.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_multi_test.add_argument('-v', '--verbose', default=False)
     add_gen_conf_args(parser_multi_test)
@@ -829,7 +837,7 @@ if __name__ == '__main__':
                               'remote targets.')
     parser_bench.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
     parser_bench.add_argument('-f', '--file', metavar='CONFIG_FILE')
-    parser_bench.add_argument('-g', '--cooling', default=0, type=int)
+    parser_bench.add_argument('-g', '--cooling', default=5, type=int)
     parser_bench.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_bench.add_argument('-v', '--verbose', default=False)
     add_gen_conf_args(parser_bench)

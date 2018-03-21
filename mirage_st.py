@@ -121,7 +121,7 @@ class MIRAGESTTarget(MIRAGE_ST, Target):
         return '\n'.join(
             ['#!/bin/bash',
              'cd {guest_dir}/',
-             'sudo OCAML_SPACETIME_INTERVAL=100 ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test true --runtime 90 &',
+             'OCAML_SPACETIME_INTERVAL=100 ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test true --runtime 90 &',
              'disown -ah'
             ]
         ).format(
