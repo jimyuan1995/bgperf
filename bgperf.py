@@ -309,14 +309,13 @@ def two_peer_test(args):
     max_mem = 0.0
     mem = 0.0
 
-    cooling = args.cooling
-
-    while cooling >= 0:
-        if q.empty():
-            cooling -= 1
+    prev_cpu = 0.0
+    while True:
+        if q.empty() and prev_cpu < 0.01:
+            break
 
         info = q.get()
-
+        prev_cpu = info['cpu']
         cpu += info['cpu']
         mem += info['mem']
         max_mem = max(info['mem'], max_mem)
@@ -567,20 +566,20 @@ def multitest(args):
     max_mem = 0.0
     mem = 0.0
 
-    # Allow CPU/Memory usage to cool down
-    cooling = args.cooling
-
     # Count of received prefixes
     recved = 0
 
     is_done = False
+    prev_cpu = 0.0
 
-    end = datetime.datetime.now()
+    while True:
+        if is_done and q.empty() and prev_cpu < 0.01:
+            break
 
-    while cooling >= 0:
         info = q.get()
 
         if not is_remote and info['who'] == target.name:
+            prev_cpu = info['cpu']
             cpu += info['cpu']
             mem += info['mem']
             max_mem = max(info['mem'], max_mem)
@@ -595,9 +594,6 @@ def multitest(args):
             if info['checked'] and (not is_done):
                 is_done = True
                 end = info['time']
-
-            if is_done:
-                cooling -= 1
 
     # Final performance measurement output
     print 'total time: {0}, total CPU: {1:>4.2f}, max MEM: {2}'.format(end - start, cpu, mem_human(max_mem))
