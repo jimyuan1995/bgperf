@@ -68,7 +68,7 @@ class FRRoutingTarget(FRRouting, Target):
     CONTAINER_NAME = 'bgperf_frrouting_target'
     CONFIG_FILE_NAME = 'bgpd.conf'
 
-    def write_config(self, scenario_global_conf):
+    def write_config(self, scenario_global_conf, args):
 
         config = """hostname bgpd
 password zebra
@@ -78,14 +78,22 @@ bgp router-id {1}
 
         def gen_neighbor_config(n):
             local_addr = n['local-address']
-            c = """neighbor {0} remote-as {1}
-neighbor {0} advertisement-interval 0
-neighbor {0} solo
-neighbor {0} timers 30 90
-""".format(local_addr, n['as']) # adjust BGP hold-timers if desired
+
+            if args.peer_group:
+                c = """neighbor {0} remote-as {1}
+    neighbor {0} advertisement-interval 0
+    neighbor {0} timers 30 90
+    neighbor {0} solo
+    """.format(local_addr, n['as']) # adjust BGP hold-timers if desired
+            else:
+                c = """neighbor {0} remote-as {1}
+                    neighbor {0} advertisement-interval 0
+                    neighbor {0} timers 30 90
+                    """.format(local_addr, n['as'])
+
             if 'filter' in n:
                 for p in (n['filter']['in'] if 'in' in n['filter'] else []):
-                    c += 'neighbor {0} route-map {1} export\n'.format(local_addr, p)
+                    c += 'neighbor {0} route-map {1} import\n'.format(local_addr, p)
             return c
 
         with open('{0}/{1}'.format(self.host_dir, self.CONFIG_FILE_NAME), 'w') as f:

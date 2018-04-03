@@ -46,6 +46,7 @@ RUN rm -rf mrt-format \
 
 COPY --chown=opam:opam mrt-format /home/opam/mrt-format
 COPY --chown=opam:opam Bgp4 /home/opam/Mirage-BGP
+COPY --chown=opam:opam ocaml-lazy-trie /home/opam/ocaml-lazy-trie
 
 RUN cd Mirage-BGP/src/bgpd \
 && eval `opam config env` \
@@ -95,7 +96,7 @@ class MIRAGETarget(MIRAGE, Target):
     CONTAINER_NAME = 'bgperf_mirage_target'
     CONFIG_FILE_NAME = 'bgpd.json'
 
-    def write_config(self, scenario_global_conf):
+    def write_config(self, scenario_global_conf, args):
         config = {}
         config['local_asn'] = self.conf['as']
         config['local_id'] = self.conf['router-id']
@@ -109,12 +110,78 @@ class MIRAGETarget(MIRAGE, Target):
             peer['hold_time'] = 180
             peer['conn_retry_time'] = 240
             peer['remote_port'] = 179
+            if args.peer_group:
+                peer['peer_group'] = 1
+
+
+            if 'filter' in n:
+                for p in (n['filter']['in'] if 'in' in n['filter'] else []):
+                    peer['inbound_filter'] = 'route_map 0'
             return peer
 
+        count = 0
         with open('{0}/{1}'.format(self.host_dir, self.CONFIG_FILE_NAME), 'w') as f:
+            if 'policy' in scenario_global_conf:
+                seq = 10
+                for k, v in scenario_global_conf['policy'].iteritems():
+                    match_info = []
+                    for i, match in enumerate(v['match']):
+                        n = '{0}_match_{1}'.format(k, i)
+                        if match['type'] == 'prefix':
+                            prefix_list = []
+                            for p in match['value']:
+                                prefix_list.append(p)
+                            config['prefix_list 1'.format(count)] = prefix_list
+                        elif match['type'] == 'as-path':
+                            f.write(''.join('ip as-path access-list {0} deny _{1}_\n'.format(n, p) for p in match['value']))
+                            f.write('ip as-path access-list {0} permit .*\n'.format(n))
+                        elif match['type'] == 'community':
+                            f.write(''.join('ip community-list standard {0} permit {1}\n'.format(n, p) for p in match['value']))
+                            f.write('ip community-list standard {0} permit\n'.format(n))
+                        elif match['type'] == 'ext-community':
+                            f.write(''.join('ip extcommunity-list standard {0} permit {1} {2}\n'.format(n, *p.split(':', 1)) for p in match['value']))
+                            f.write('ip extcommunity-list standard {0} permit\n'.format(n))
+
+                        match_info.append((match['type'], n))
+
+                    route_map = []
+
+                    entry = {}
+                    entry['order'] = 10
+                    entry['permit'] = False
+                    entry['conditions'] = ['prefix_list 1']
+                    entry['actions'] = []
+                    route_map.append(entry)
+
+                    entry = {}
+                    entry['order'] = 20
+                    entry['permit'] = True
+                    entry['conditions'] = []
+                    entry['actions'] = []
+                    route_map.append(entry)
+
+                    config['route_map 0'] = route_map
+
+                    # f.write('route-map {0} permit {1}\n'.format(k, seq))
+                    # for info in match_info:
+                    #     if info[0] == 'prefix':
+                    #         f.write('match ip address prefix-list {0}\n'.format(info[1]))
+                    #     elif info[0] == 'as-path':
+                    #         f.write('match as-path {0}\n'.format(info[1]))
+                    #     elif info[0] == 'community':
+                    #         f.write('match community {0}\n'.format(info[1]))
+                    #     elif info[0] == 'ext-community':
+                    #         f.write('match extcommunity {0}\n'.format(info[1]))
+                    #
+                    # seq += 10
+
+
+            count = 0
             for n in sorted(list(flatten(t.get('neighbors', {}).values() for t in scenario_global_conf['testers'])) + [scenario_global_conf['monitor']], key=lambda n: n['as']):
                 peer = gen_neighbor_config(n)
-                config['peers'].append(peer)
+                name = 'neighbor {0}'.format(count)
+                config[name] = peer
+                count += 1
             f.write(json.dumps(config))
             f.flush()
 
@@ -122,7 +189,7 @@ class MIRAGETarget(MIRAGE, Target):
         return '\n'.join(
             ['#!/bin/bash',
              'cd {guest_dir}/',
-             'sudo ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test true --runtime 90 &',
+             'sudo ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test --runtime 90 --pg_transit &',
              'disown -ah'
             ]
         ).format(

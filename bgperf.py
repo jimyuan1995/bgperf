@@ -309,9 +309,16 @@ def two_peer_test(args):
     max_mem = 0.0
     mem = 0.0
 
+    count = 3
+
     prev_cpu = 0.0
     while True:
-        if q.empty() and prev_cpu < 0.01:
+        if q.empty() and prev_cpu == 0.0:
+            count -= 1
+        else:
+            count = 3
+
+        if count == 0:
             break
 
         info = q.get()
@@ -507,7 +514,7 @@ def multitest(args):
             target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'], image=args.image)
         else:
             target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'])
-        target.run(conf, dckr_net_name)
+        target.run(conf, dckr_net_name, args)
 
     time.sleep(3)
 
@@ -572,8 +579,15 @@ def multitest(args):
     is_done = False
     prev_cpu = 0.0
 
+    count = 3
+
     while True:
-        if is_done and q.empty() and prev_cpu < 0.01:
+        if is_done and q.empty() and prev_cpu == 0.0:
+            count -= 1
+        else:
+            count = 3
+
+        if count == 0:
             break
 
         info = q.get()
@@ -796,6 +810,7 @@ if __name__ == '__main__':
     parser_two_peer.add_argument('-g', '--cooling', default=5, type=int)
     parser_two_peer.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_two_peer.add_argument('-v', '--verbose', default=False)
+    parser_two_peer.add_argument('-pg', '--peer-group', default=False)
     add_gen_conf_args(parser_two_peer)
 
     parser_two_peer.set_defaults(func=two_peer_test)
@@ -817,6 +832,7 @@ if __name__ == '__main__':
     parser_multi_test.add_argument('-g', '--cooling', default=5, type=int)
     parser_multi_test.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_multi_test.add_argument('-v', '--verbose', default=False)
+    parser_multi_test.add_argument('-pg', '--peer-group', default=False)
     add_gen_conf_args(parser_multi_test)
     parser_multi_test.set_defaults(func=multitest)
 
@@ -836,6 +852,7 @@ if __name__ == '__main__':
     parser_bench.add_argument('-g', '--cooling', default=5, type=int)
     parser_bench.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_bench.add_argument('-v', '--verbose', default=False)
+    parser_bench.add_argument('-pg', '--peer-group', default=False)
     add_gen_conf_args(parser_bench)
     parser_bench.set_defaults(func=bench)
 

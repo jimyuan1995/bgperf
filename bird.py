@@ -42,12 +42,12 @@ class BIRDTarget(BIRD, Target):
     CONTAINER_NAME = 'bgperf_bird_target'
     CONFIG_FILE_NAME = 'bird.conf'
 
-    def write_config(self, scenario_global_conf):
+    def write_config(self, scenario_global_conf, args):
         config = '''router id {0};
 listen bgp port 179;
 protocol device {{ }}
 protocol direct {{ disabled; }}
-protocol kernel {{ disabled; }}
+protocol kernel {{  }}
 table master{1};
 '''.format(self.conf['router-id'], ' sorted' if self.conf['single-table'] else '')
 

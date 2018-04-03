@@ -226,7 +226,7 @@ class Target(Container):
 
     CONFIG_FILE_NAME = None
 
-    def write_config(self, scenario_global_conf):
+    def write_config(self, scenario_global_conf, args):
         raise NotImplementedError()
 
     def use_existing_config(self):
@@ -237,11 +237,11 @@ class Target(Container):
             return True
         return False
 
-    def run(self, scenario_global_conf, dckr_net_name=''):
+    def run(self, scenario_global_conf, dckr_net_name='', args={}):
         ctn = super(Target, self).run(dckr_net_name)
 
         if not self.use_existing_config():
-            self.write_config(scenario_global_conf)
+            self.write_config(scenario_global_conf, args)
 
         self.exec_startup_cmd(detach=True)
 
