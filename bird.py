@@ -47,7 +47,7 @@ class BIRDTarget(BIRD, Target):
 listen bgp port 179;
 protocol device {{ }}
 protocol direct {{ disabled; }}
-protocol kernel {{  }}
+protocol kernel {{ disabled; }}
 table master{1};
 '''.format(self.conf['router-id'], ' sorted' if self.conf['single-table'] else '')
 
