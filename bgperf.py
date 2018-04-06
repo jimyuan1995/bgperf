@@ -412,7 +412,8 @@ def multitest(args):
         m = Monitor(config_dir+'/monitor', conf['monitor'])
         m.run(conf, dckr_net_name)
 
-        is_remote = True if 'remote' in conf['target'] and conf['target']['remote'] else False
+        # is_remote = True if 'remote' in conf['target'] and conf['target']['remote'] else False
+        is_remote = True
 
         if is_remote:
             print 'target is remote ({})'.format(conf['target']['local-address'])
@@ -615,8 +616,10 @@ def multitest(args):
                 recved = info['state']['adj-table']['accepted'] if 'accepted' in info['state']['adj-table'] else 0
 
                 if info['checked'] and (not is_done):
+                    print 'done'
                     is_done = True
                     end = info['time']
+                    break
 
         # Final performance measurement output
         print 'peer: {0}, prefix {1}, total time: {2}, total CPU: {3:>4.2f}, max MEM: {4}'.format(
