@@ -97,6 +97,8 @@ class MIRAGETarget(MIRAGE, Target):
     CONFIG_FILE_NAME = 'bgpd.json'
 
     def write_config(self, scenario_global_conf, args):
+        MIRAGETarget.args_global = args
+
         config = {}
         config['local_asn'] = self.conf['as']
         config['local_id'] = self.conf['router-id']
@@ -186,15 +188,27 @@ class MIRAGETarget(MIRAGE, Target):
             f.flush()
 
     def get_startup_cmd(self):
-        return '\n'.join(
-            ['#!/bin/bash',
-             'cd {guest_dir}/',
-             'sudo ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test --runtime 90 --pg_transit &',
-             'disown -ah'
-            ]
-        ).format(
-            guest_dir=self.guest_dir,
-            config_file_name=self.CONFIG_FILE_NAME
-        )
+        if MIRAGETarget.args_global.peer_group:
+            return '\n'.join(
+                ['#!/bin/bash',
+                 'cd {guest_dir}/',
+                 'sudo ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test --runtime 90 --pg_transit &',
+                 'disown -ah'
+                ]
+            ).format(
+                guest_dir=self.guest_dir,
+                config_file_name=self.CONFIG_FILE_NAME
+            )
+        else:
+            return '\n'.join(
+                ['#!/bin/bash',
+                 'cd {guest_dir}/',
+                 'sudo ../Mirage-BGP/src/bgpd/bgpd --config {config_file_name} --test --runtime 90 &',
+                 'disown -ah'
+                 ]
+            ).format(
+                guest_dir=self.guest_dir,
+                config_file_name=self.CONFIG_FILE_NAME
+            )
 
 

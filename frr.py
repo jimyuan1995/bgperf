@@ -83,12 +83,12 @@ bgp router-id {1}
                 c = """neighbor {0} remote-as {1}
     neighbor {0} advertisement-interval 0
     neighbor {0} timers 30 90
-    neighbor {0} solo
     """.format(local_addr, n['as']) # adjust BGP hold-timers if desired
             else:
                 c = """neighbor {0} remote-as {1}
                     neighbor {0} advertisement-interval 0
                     neighbor {0} timers 30 90
+                    neighbor {0} solo
                     """.format(local_addr, n['as'])
 
             if 'filter' in n:

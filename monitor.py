@@ -73,10 +73,11 @@ gobgpd -t yaml -f {1}/{2} -l {3} > {1}/gobgpd.log 2>&1
                     cps.pop(0)
                     info['time'] = datetime.datetime.now()
                     info['checked'] = True
+                    queue.put(info)
+                    break
                 else:
                     info['checked'] = False
-                queue.put(info)
-                time.sleep(1)
+                time.sleep(0.05)
 
         t = Thread(target=stats)
         t.daemon = True

@@ -47,6 +47,8 @@ from mako.template import Template
 from packaging import version
 from docker.types import IPAMConfig, IPAMPool
 from throughput import Throughput, ThroughputTarget
+import numpy
+import csv
 
 def gen_mako_macro():
     return '''<%
@@ -101,11 +103,11 @@ def prepare(args):
     ExaBGP.build_image(args.force, nocache=args.no_cache)
     ExaBGP_MRTParse.build_image(args.force, nocache=args.no_cache)
     GoBGP.build_image(args.force, nocache=args.no_cache)
-    Quagga.build_image(args.force, checkout='quagga-1.0.20160309', nocache=args.no_cache)
-    BIRD.build_image(args.force, nocache=args.no_cache)
-    MIRAGE.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
-    MIRAGE_ST.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
-    FRRouting.build_image(args.force, checkout='stable/3.0', nocache=args.no_cache)
+    # Quagga.build_image(args.force, checkout='quagga-1.0.20160309', nocache=args.no_cache)
+    # BIRD.build_image(args.force, nocache=args.no_cache)
+    # MIRAGE.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
+    # MIRAGE_ST.build_image(args.force, checkout='bgperf', nocache=args.no_cache)
+    # FRRouting.build_image(args.force, checkout='stable/3.0', nocache=args.no_cache)
 
 
 def clean(args):
@@ -216,7 +218,7 @@ def two_peer_test(args):
 
     print 'run', args.target
     target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'])
-    target.run(conf, dckr_net_name)
+    target.run(conf, dckr_net_name, args)
 
     time.sleep(3)
 
@@ -335,282 +337,359 @@ def two_peer_test(args):
     return
 
 
+
+
 def multitest(args):
-    config_dir = '{0}/{1}'.format(args.dir, args.bench_name)
-    dckr_net_name = args.docker_network_name or args.bench_name + '-br'
+    repeat_time = args.repeat_time
+    cpu_results = []
+    mmem_results = []
+    time_results = []
 
-    for target_class in [BIRDTarget, GoBGPTarget, QuaggaTarget, FRRoutingTarget, MIRAGETarget, MIRAGESTTarget]:
-        if ctn_exists(target_class.CONTAINER_NAME):
-            print 'removing target container', target_class.CONTAINER_NAME
-            dckr.remove_container(target_class.CONTAINER_NAME, force=True)
+    while repeat_time > 0:
+        config_dir = '{0}/{1}'.format(args.dir, args.bench_name)
+        dckr_net_name = args.docker_network_name or args.bench_name + '-br'
 
-    if not args.repeat:
-        if ctn_exists(Monitor.CONTAINER_NAME):
-            print 'removing monitor container', Monitor.CONTAINER_NAME
-            dckr.remove_container(Monitor.CONTAINER_NAME, force=True)
+        for target_class in [BIRDTarget, GoBGPTarget, QuaggaTarget, FRRoutingTarget, MIRAGETarget, MIRAGESTTarget]:
+            if ctn_exists(target_class.CONTAINER_NAME):
+                print 'removing target container', target_class.CONTAINER_NAME
+                dckr.remove_container(target_class.CONTAINER_NAME, force=True)
 
-        for ctn_name in get_ctn_names():
-            if ctn_name.startswith(ExaBGPTester.CONTAINER_NAME_PREFIX) or \
-                ctn_name.startswith(ExaBGPMrtTester.CONTAINER_NAME_PREFIX) or \
-                ctn_name.startswith(GoBGPMRTTester.CONTAINER_NAME_PREFIX):
-                print 'removing tester container', ctn_name
-                dckr.remove_container(ctn_name, force=True)
+        if not args.repeat:
+            if ctn_exists(Monitor.CONTAINER_NAME):
+                print 'removing monitor container', Monitor.CONTAINER_NAME
+                dckr.remove_container(Monitor.CONTAINER_NAME, force=True)
 
-        for ctn_name in get_ctn_names():
-            if ctn_name.startswith("bgperf_relay_"):
-                print 'removing relay container', ctn_name
-                dckr.remove_container(ctn_name, force=True)
+            for ctn_name in get_ctn_names():
+                if ctn_name.startswith(ExaBGPTester.CONTAINER_NAME_PREFIX) or \
+                    ctn_name.startswith(ExaBGPMrtTester.CONTAINER_NAME_PREFIX) or \
+                    ctn_name.startswith(GoBGPMRTTester.CONTAINER_NAME_PREFIX):
+                    print 'removing tester container', ctn_name
+                    dckr.remove_container(ctn_name, force=True)
 
-        for ctn_name in get_ctn_names():
-            if ctn_name.startswith("bgperf_throughput_tester"):
-                print 'removing throughput tester container', ctn_name
-                dckr.remove_container(ctn_name, force=True)
+            for ctn_name in get_ctn_names():
+                if ctn_name.startswith("bgperf_relay_"):
+                    print 'removing relay container', ctn_name
+                    dckr.remove_container(ctn_name, force=True)
 
-        if os.path.exists(config_dir):
-            shutil.rmtree(config_dir)
+            for ctn_name in get_ctn_names():
+                if ctn_name.startswith("bgperf_throughput_tester"):
+                    print 'removing throughput tester container', ctn_name
+                    dckr.remove_container(ctn_name, force=True)
 
-    if args.file:
-        with open(args.file) as f:
-            conf = yaml.load(Template(f.read()).render())
-    else:
-        conf = gen_conf(args)
-        if not os.path.exists(config_dir):
-            os.makedirs(config_dir)
-        with open('{0}/scenario.yaml'.format(config_dir), 'w') as f:
-            f.write(conf)
-        conf = yaml.load(Template(conf).render())
+            if os.path.exists(config_dir):
+                shutil.rmtree(config_dir)
 
-    bridge_found = False
-    for network in dckr.networks(names=[dckr_net_name]):
-        if network['Name'] == dckr_net_name:
-            print 'Docker network "{}" already exists'.format(dckr_net_name)
-            bridge_found = True
-            break
-    if not bridge_found:
-        subnet = conf['local_prefix']
-        print 'creating Docker network "{}" with subnet {}'.format(dckr_net_name, subnet)
-        ipam = IPAMConfig(pool_configs=[IPAMPool(subnet=subnet)])
-        network = dckr.create_network(dckr_net_name, driver='bridge', ipam=ipam)
+        if args.file:
+            with open(args.file) as f:
+                conf = yaml.load(Template(f.read()).render())
+        else:
+            conf = gen_conf(args)
+            if not os.path.exists(config_dir):
+                os.makedirs(config_dir)
+            with open('{0}/scenario.yaml'.format(config_dir), 'w') as f:
+                f.write(conf)
+            conf = yaml.load(Template(conf).render())
 
-    num_tester = sum(len(t.get('neighbors', [])) for t in conf.get('testers', []))
-    if num_tester > gc_thresh3():
-        print 'gc_thresh3({0}) is lower than the number of peer({1})'.format(gc_thresh3(), num_tester)
-        print 'type next to increase the value'
-        print '$ echo 16384 | sudo tee /proc/sys/net/ipv4/neigh/default/gc_thresh3'
+        bridge_found = False
+        for network in dckr.networks(names=[dckr_net_name]):
+            if network['Name'] == dckr_net_name:
+                print 'Docker network "{}" already exists'.format(dckr_net_name)
+                bridge_found = True
+                break
+        if not bridge_found:
+            subnet = conf['local_prefix']
+            print 'creating Docker network "{}" with subnet {}'.format(dckr_net_name, subnet)
+            ipam = IPAMConfig(pool_configs=[IPAMPool(subnet=subnet)])
+            network = dckr.create_network(dckr_net_name, driver='bridge', ipam=ipam)
 
-    print 'run monitor'
-    m = Monitor(config_dir+'/monitor', conf['monitor'])
-    m.run(conf, dckr_net_name)
+        num_tester = sum(len(t.get('neighbors', [])) for t in conf.get('testers', []))
+        if num_tester > gc_thresh3():
+            print 'gc_thresh3({0}) is lower than the number of peer({1})'.format(gc_thresh3(), num_tester)
+            print 'type next to increase the value'
+            print '$ echo 16384 | sudo tee /proc/sys/net/ipv4/neigh/default/gc_thresh3'
 
-    is_remote = True if 'remote' in conf['target'] and conf['target']['remote'] else False
+        print 'run monitor'
+        m = Monitor(config_dir+'/monitor', conf['monitor'])
+        m.run(conf, dckr_net_name)
 
-    if is_remote:
-        print 'target is remote ({})'.format(conf['target']['local-address'])
+        is_remote = True if 'remote' in conf['target'] and conf['target']['remote'] else False
 
-        ip = IPRoute()
+        if is_remote:
+            print 'target is remote ({})'.format(conf['target']['local-address'])
 
-        # r: route to the target
-        r = ip.get_routes(dst=conf['target']['local-address'], family=AF_INET)
-        if len(r) == 0:
-            print 'no route to remote target {0}'.format(conf['target']['local-address'])
-            sys.exit(1)
+            ip = IPRoute()
 
-        # intf: interface used to reach the target
-        idx = [t[1] for t in r[0]['attrs'] if t[0] == 'RTA_OIF'][0]
-        intf = ip.get_links(idx)[0]
-        intf_name = intf.get_attr('IFLA_IFNAME')
+            # r: route to the target
+            r = ip.get_routes(dst=conf['target']['local-address'], family=AF_INET)
+            if len(r) == 0:
+                print 'no route to remote target {0}'.format(conf['target']['local-address'])
+                sys.exit(1)
 
-        # raw_bridge_name: Linux bridge name of the Docker bridge
-        # TODO: not sure if the linux bridge name is always given by
-        #       "br-<first 12 characters of Docker network ID>".
-        raw_bridge_name = args.bridge_name or 'br-{}'.format(network['Id'][0:12])
+            # intf: interface used to reach the target
+            idx = [t[1] for t in r[0]['attrs'] if t[0] == 'RTA_OIF'][0]
+            intf = ip.get_links(idx)[0]
+            intf_name = intf.get_attr('IFLA_IFNAME')
 
-        # raw_bridges: list of Linux bridges that match raw_bridge_name
-        raw_bridges = ip.link_lookup(ifname=raw_bridge_name)
-        if len(raw_bridges) == 0:
-            if not args.bridge_name:
-                print('can\'t determine the Linux bridge interface name starting '
-                      'from the Docker network {}'.format(dckr_net_name))
-            else:
-                print('the Linux bridge name provided ({}) seems nonexistent'.format(
-                      raw_bridge_name))
-            print('Since the target is remote, the host interface used to '
-                    'reach the target ({}) must be part of the Linux bridge '
-                    'used by the Docker network {}, but without the correct Linux '
-                    'bridge name it\'s impossible to verify if that\'s true'.format(
-                        intf_name, dckr_net_name))
-            if not args.bridge_name:
-                print('Please supply the Linux bridge name corresponding to the '
-                      'Docker network {} using the --bridge-name argument.'.format(
-                          dckr_net_name))
-            sys.exit(1)
+            # raw_bridge_name: Linux bridge name of the Docker bridge
+            # TODO: not sure if the linux bridge name is always given by
+            #       "br-<first 12 characters of Docker network ID>".
+            raw_bridge_name = args.bridge_name or 'br-{}'.format(network['Id'][0:12])
 
-        # intf_bridge: bridge interface that intf is already member of
-        intf_bridge = intf.get_attr('IFLA_MASTER')
-
-        # if intf is not member of the bridge, add it
-        if intf_bridge not in raw_bridges:
-            if intf_bridge is None:
+            # raw_bridges: list of Linux bridges that match raw_bridge_name
+            raw_bridges = ip.link_lookup(ifname=raw_bridge_name)
+            if len(raw_bridges) == 0:
+                if not args.bridge_name:
+                    print('can\'t determine the Linux bridge interface name starting '
+                          'from the Docker network {}'.format(dckr_net_name))
+                else:
+                    print('the Linux bridge name provided ({}) seems nonexistent'.format(
+                          raw_bridge_name))
                 print('Since the target is remote, the host interface used to '
-                      'reach the target ({}) must be part of the Linux bridge '
-                      'used by the Docker network {}'.format(
-                          intf_name, dckr_net_name))
-                sys.stdout.write('Do you confirm to add the interface {} '
-                                 'to the bridge {}? [yes/NO] '.format(
-                                     intf_name, raw_bridge_name
-                                    ))
-                try:
-                    answer = raw_input()
-                except:
-                    print 'aborting'
-                    sys.exit(1)
-                answer = answer.strip()
-                if answer.lower() != 'yes':
-                    print 'aborting'
-                    sys.exit(1)
+                        'reach the target ({}) must be part of the Linux bridge '
+                        'used by the Docker network {}, but without the correct Linux '
+                        'bridge name it\'s impossible to verify if that\'s true'.format(
+                            intf_name, dckr_net_name))
+                if not args.bridge_name:
+                    print('Please supply the Linux bridge name corresponding to the '
+                          'Docker network {} using the --bridge-name argument.'.format(
+                              dckr_net_name))
+                sys.exit(1)
 
-                print 'adding interface {} to the bridge {}'.format(
-                    intf_name, raw_bridge_name
-                )
-                br = raw_bridges[0]
+            # intf_bridge: bridge interface that intf is already member of
+            intf_bridge = intf.get_attr('IFLA_MASTER')
 
-                try:
-                    ip.link('set', index=idx, master=br)
-                except Exception as e:
-                    print('Something went wrong: {}'.format(str(e)))
+            # if intf is not member of the bridge, add it
+            if intf_bridge not in raw_bridges:
+                if intf_bridge is None:
+                    print('Since the target is remote, the host interface used to '
+                          'reach the target ({}) must be part of the Linux bridge '
+                          'used by the Docker network {}'.format(
+                              intf_name, dckr_net_name))
+                    sys.stdout.write('Do you confirm to add the interface {} '
+                                     'to the bridge {}? [yes/NO] '.format(
+                                         intf_name, raw_bridge_name
+                                        ))
+                    try:
+                        answer = raw_input()
+                    except:
+                        print 'aborting'
+                        sys.exit(1)
+                    answer = answer.strip()
+                    if answer.lower() != 'yes':
+                        print 'aborting'
+                        sys.exit(1)
+
+                    print 'adding interface {} to the bridge {}'.format(
+                        intf_name, raw_bridge_name
+                    )
+                    br = raw_bridges[0]
+
+                    try:
+                        ip.link('set', index=idx, master=br)
+                    except Exception as e:
+                        print('Something went wrong: {}'.format(str(e)))
+                        print('Please consider running the following command to '
+                              'add the {iface} interface to the {br} bridge:\n'
+                              '   sudo brctl addif {br} {iface}'.format(
+                                  iface=intf_name, br=raw_bridge_name))
+                        print('\n\n\n')
+                        raise
+                else:
+                    curr_bridge_name = ip.get_links(intf_bridge)[0].get_attr('IFLA_IFNAME')
+                    print('the interface used to reach the target ({}) '
+                          'is already member of the bridge {}, which is not '
+                          'the one used in this configuration'.format(
+                              intf_name, curr_bridge_name))
                     print('Please consider running the following command to '
-                          'add the {iface} interface to the {br} bridge:\n'
-                          '   sudo brctl addif {br} {iface}'.format(
-                              iface=intf_name, br=raw_bridge_name))
-                    print('\n\n\n')
-                    raise
-            else:
-                curr_bridge_name = ip.get_links(intf_bridge)[0].get_attr('IFLA_IFNAME')
-                print('the interface used to reach the target ({}) '
-                      'is already member of the bridge {}, which is not '
-                      'the one used in this configuration'.format(
-                          intf_name, curr_bridge_name))
-                print('Please consider running the following command to '
-                        'remove the {iface} interface from the {br} bridge:\n'
-                        '   sudo brctl addif {br} {iface}'.format(
-                            iface=intf_name, br=curr_bridge_name))
-                sys.exit(1)
-    else:
-        if args.target == 'gobgp':
-            target_class = GoBGPTarget
-        elif args.target == 'bird':
-            target_class = BIRDTarget
-        elif args.target == 'quagga':
-            target_class = QuaggaTarget
-        elif args.target == 'frr':
-            target_class = FRRoutingTarget
-        elif args.target == 'mirage':
-            target_class = MIRAGETarget
-        elif args.target == 'mirage_st':
-            target_class = MIRAGESTTarget
-
-        print 'run', args.target
-        if args.image:
-            target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'], image=args.image)
-        else:
-            target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'])
-        target.run(conf, dckr_net_name, args)
-
-    time.sleep(3)
-
-    print 'waiting bgp connection between {0} and monitor'.format(args.target)
-    m.wait_established(conf['target']['local-address'])
-
-    q = Queue()
-    start = datetime.datetime.now()
-    m.stats(q)
-    if not is_remote:
-        target.stats(q)
-
-    if not args.repeat:
-        for idx, tester in enumerate(conf['testers']):
-            if 'name' not in tester:
-                name = 'tester{0}'.format(idx)
-            else:
-                name = tester['name']
-            if 'type' not in tester:
-                tester_type = 'normal'
-            else:
-                tester_type = tester['type']
-            if tester_type == 'normal':
-                tester_class = ExaBGPTester
-            elif tester_type == 'mrt':
-                if 'mrt_injector' not in tester:
-                    mrt_injector = 'gobgp'
-                else:
-                    mrt_injector = tester['mrt_injector']
-                if mrt_injector == 'gobgp':
-                    tester_class = GoBGPMRTTester
-                elif mrt_injector == 'exabgp':
-                    tester_class = ExaBGPMrtTester
-                else:
-                    print 'invalid mrt_injector:', mrt_injector
+                            'remove the {iface} interface from the {br} bridge:\n'
+                            '   sudo brctl addif {br} {iface}'.format(
+                                iface=intf_name, br=curr_bridge_name))
                     sys.exit(1)
+        else:
+            if args.target == 'gobgp':
+                target_class = GoBGPTarget
+            elif args.target == 'bird':
+                target_class = BIRDTarget
+            elif args.target == 'quagga':
+                target_class = QuaggaTarget
+            elif args.target == 'frr':
+                target_class = FRRoutingTarget
+            elif args.target == 'mirage':
+                target_class = MIRAGETarget
+            elif args.target == 'mirage_st':
+                target_class = MIRAGESTTarget
+
+            print 'run', args.target
+            if args.image:
+                target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'], image=args.image)
             else:
-                print 'invalid tester type:', tester_type
-                sys.exit(1)
-            t = tester_class(name, config_dir+'/'+name, tester)
-            print 'run tester', name, 'type', tester_type
-            t.run(conf['target'], dckr_net_name)
+                target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'])
+            target.run(conf, dckr_net_name, args)
 
-    def mem_human(v):
-        if v > 1000 * 1000 * 1000:
-            return '{0:.2f}GB'.format(float(v) / (1000 * 1000 * 1000))
-        elif v > 1000 * 1000:
-            return '{0:.2f}MB'.format(float(v) / (1000 * 1000))
-        elif v > 1000:
-            return '{0:.2f}KB'.format(float(v) / 1000)
-        else:
-            return '{0:.2f}B'.format(float(v))
+            q = Queue()
+            m.stats(q)
+            if not is_remote:
+                target.stats(q)
 
-    # Performance measurement
-    cpu = 0.0
-    max_mem = 0.0
-    mem = 0.0
+        print 'waiting bgp connection between {0} and monitor'.format(args.target)
+        m.wait_established(conf['target']['local-address'])
 
-    # Count of received prefixes
-    recved = 0
+        if not args.repeat:
+            for idx, tester in enumerate(conf['testers']):
+                if 'name' not in tester:
+                    name = 'tester{0}'.format(idx)
+                else:
+                    name = tester['name']
+                if 'type' not in tester:
+                    tester_type = 'normal'
+                else:
+                    tester_type = tester['type']
+                if tester_type == 'normal':
+                    tester_class = ExaBGPTester
+                elif tester_type == 'mrt':
+                    if 'mrt_injector' not in tester:
+                        mrt_injector = 'gobgp'
+                    else:
+                        mrt_injector = tester['mrt_injector']
+                    if mrt_injector == 'gobgp':
+                        tester_class = GoBGPMRTTester
+                    elif mrt_injector == 'exabgp':
+                        tester_class = ExaBGPMrtTester
+                    else:
+                        print 'invalid mrt_injector:', mrt_injector
+                        sys.exit(1)
+                else:
+                    print 'invalid tester type:', tester_type
+                    sys.exit(1)
+                t = tester_class(name, config_dir+'/'+name, tester)
+                print 'run tester', name, 'type', tester_type
+                t.run(conf['target'], dckr_net_name)
 
-    is_done = False
-    prev_cpu = 0.0
+        start = datetime.datetime.now()
 
-    count = 3
+        def mem_human(v):
+            if v > 1000 * 1000 * 1000:
+                return '{0:.2f}GB'.format(float(v) / (1000 * 1000 * 1000))
+            elif v > 1000 * 1000:
+                return '{0:.2f}MB'.format(float(v) / (1000 * 1000))
+            elif v > 1000:
+                return '{0:.2f}KB'.format(float(v) / 1000)
+            else:
+                return '{0:.2f}B'.format(float(v))
 
-    while True:
-        if is_done and q.empty() and prev_cpu == 0.0:
-            count -= 1
-        else:
-            count = 3
+        # Performance measurement
+        cpu = 0.0
+        max_mem = 0.0
+        mem = 0.0
 
-        if count == 0:
-            break
+        # Count of received prefixes
+        recved = 0
 
-        info = q.get()
+        is_done = False
+        prev_cpu = 0.0
 
-        if not is_remote and info['who'] == target.name:
-            prev_cpu = info['cpu']
-            cpu += info['cpu']
-            mem += info['mem']
-            max_mem = max(info['mem'], max_mem)
-            elapsed = info['time'] - start
+        count = 3
 
-            if args.verbose:
-                print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
+        while True:
+            if is_done and q.empty() and prev_cpu == 0.0:
+                count -= 1
+            else:
+                count = 3
 
-        if info['who'] == m.name:
-            recved = info['state']['adj-table']['accepted'] if 'accepted' in info['state']['adj-table'] else 0
+            if count == 0:
+                break
 
-            if info['checked'] and (not is_done):
-                is_done = True
-                end = info['time']
+            info = q.get()
 
-    # Final performance measurement output
-    print 'total time: {0}, total CPU: {1:>4.2f}, max MEM: {2}'.format(end - start, cpu, mem_human(max_mem))
+            if not is_remote and info['who'] == target.name:
+                prev_cpu = info['cpu']
+                cpu += info['cpu']
+                mem += info['mem']
+                max_mem = max(info['mem'], max_mem)
+                elapsed = info['time'] - start
+
+                if args.verbose:
+                    print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
+
+            if info['who'] == m.name:
+                recved = info['state']['adj-table']['accepted'] if 'accepted' in info['state']['adj-table'] else 0
+
+                if info['checked'] and (not is_done):
+                    is_done = True
+                    end = info['time']
+
+        # Final performance measurement output
+        print 'peer: {0}, prefix {1}, total time: {2}, total CPU: {3:>4.2f}, max MEM: {4}'.format(
+            args.neighbor_num, args.prefix_num, end - start, cpu, mem_human(max_mem)
+        )
+
+        repeat_time -= 1
+
+        time_results.append(float((end - start).seconds) + float((end - start).microseconds) / 1000000)
+        cpu_results.append(cpu)
+        mmem_results.append(float(max_mem)/(1024*1024))
+
+    avg_cpu = numpy.mean(cpu_results)
+    std_cpu = numpy.std(cpu_results)
+    avg_mmem = numpy.mean(mmem_results)
+    std_mmem = numpy.std(mmem_results)
+    avg_time = numpy.mean(time_results)
+    std_time = numpy.std(time_results)
+    print 'peer: {0}, prefix: {1}, time: {2} + {3}, cpu: {4} + {5}, max mem: {6} + {7}'.format(
+        args.neighbor_num, args.prefix_num, avg_time, std_time, avg_cpu, std_cpu, avg_mmem, std_mmem
+    )
+
+    print [args.neighbor_num, args.prefix_num, avg_time, std_time, avg_cpu, std_cpu, avg_mmem, std_mmem]
+
+    return [args.neighbor_num, args.prefix_num, avg_time, std_time, avg_cpu, std_cpu, avg_mmem, std_mmem]
+
+
+def diff_peer(args):
+    lower = args.lower_bound
+    upper = args.upper_bound
+    step = args.step
+
+    rows = []
+
+    curr = lower
+    while curr <= upper:
+        args.neighbor_num = curr
+        result = multitest(args)
+
+        if args.output:
+            with open(args.output, 'ab') as f:
+                writer = csv.writer(f)
+                writer.writerow(result)
+
+        rows.append(result)
+        curr += step
+
+    print rows
+
+def diff_prefix(args):
+    lower = args.lower_bound
+    upper = args.upper_bound
+    step = args.step
+
+    args.neighbor_num = 10
+
+    rows = []
+
+    curr = lower
+    while curr <= upper:
+        args.prefix_num = curr
+        result = multitest(args)
+
+        if args.output:
+            with open(args.output, 'ab') as f:
+                writer = csv.writer(f)
+                writer.writerow(result)
+
+        rows.append(result)
+        curr += step
+
+    print rows
+
 
 
 def bench(args):
@@ -810,14 +889,14 @@ if __name__ == '__main__':
     parser_two_peer.add_argument('-g', '--cooling', default=5, type=int)
     parser_two_peer.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_two_peer.add_argument('-v', '--verbose', default=False)
-    parser_two_peer.add_argument('-pg', '--peer-group', default=False)
+    parser_two_peer.add_argument('-pg', '--peer-group', action="store_true")
     add_gen_conf_args(parser_two_peer)
 
     parser_two_peer.set_defaults(func=two_peer_test)
 
     parser_multi_test = s.add_parser('multi_test', help='run multitest benchmarks')
-    parser_multi_test.add_argument('-t', '--target', choices=['gobgp', 'bird', 'quagga', 'frr', 'mirage', 'mirage_st'],
-                              default='gobgp')
+    parser_multi_test.add_argument('-t', '--target', choices=['bird', 'quagga', 'frr', 'mirage', 'mirage_st'],
+                              default='mirage')
     parser_multi_test.add_argument('-i', '--image', help='specify custom docker image')
     parser_multi_test.add_argument('--docker-network-name',
                               help='Docker network name; this is the name given by \'docker network ls\'')
@@ -832,9 +911,60 @@ if __name__ == '__main__':
     parser_multi_test.add_argument('-g', '--cooling', default=5, type=int)
     parser_multi_test.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_multi_test.add_argument('-v', '--verbose', default=False)
-    parser_multi_test.add_argument('-pg', '--peer-group', default=False)
+    parser_multi_test.add_argument('-pg', '--peer-group', action="store_true")
+    parser_multi_test.add_argument('-k', '--repeat-time', default=1, type=int)
     add_gen_conf_args(parser_multi_test)
     parser_multi_test.set_defaults(func=multitest)
+
+    parser_diff_peer = s.add_parser('diff_peer', help='run multitest benchmarks in using different peers')
+    parser_diff_peer.add_argument('-t', '--target', choices=['bird', 'quagga', 'frr', 'mirage', 'mirage_st'],
+                                   default='mirage')
+    parser_diff_peer.add_argument('-i', '--image', help='specify custom docker image')
+    parser_diff_peer.add_argument('--docker-network-name',
+                                   help='Docker network name; this is the name given by \'docker network ls\'')
+    parser_diff_peer.add_argument('--bridge-name', help='Linux bridge name of the '
+                                                         'interface corresponding to the Docker network; '
+                                                         'use this argument only if bgperf can\'t '
+                                                         'determine the Linux bridge name starting from '
+                                                         'the Docker network name in case of tests of '
+                                                         'remote targets.')
+    parser_diff_peer.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
+    parser_diff_peer.add_argument('-f', '--file', metavar='CONFIG_FILE')
+    parser_diff_peer.add_argument('-g', '--cooling', default=5, type=int)
+    parser_diff_peer.add_argument('-o', '--output', metavar='STAT_FILE')
+    parser_diff_peer.add_argument('-v', '--verbose', default=False)
+    parser_diff_peer.add_argument('-pg', '--peer-group', action="store_true")
+    parser_diff_peer.add_argument('-k', '--repeat-time', default=1, type=int)
+    parser_diff_peer.add_argument('-u', '--upper-bound', default=100, type=int)
+    parser_diff_peer.add_argument('-b', '--lower-bound', default=10, type=int)
+    parser_diff_peer.add_argument('-step', '--step', default=10, type=int)
+    add_gen_conf_args(parser_diff_peer)
+    parser_diff_peer.set_defaults(func=diff_peer)
+
+    parser_diff_prefix = s.add_parser('diff_pfx', help='run multitest benchmarks in using different prefixes')
+    parser_diff_prefix.add_argument('-t', '--target', choices=['bird', 'quagga', 'frr', 'mirage', 'mirage_st'],
+                                  default='mirage')
+    parser_diff_prefix.add_argument('-i', '--image', help='specify custom docker image')
+    parser_diff_prefix.add_argument('--docker-network-name',
+                                  help='Docker network name; this is the name given by \'docker network ls\'')
+    parser_diff_prefix.add_argument('--bridge-name', help='Linux bridge name of the '
+                                                        'interface corresponding to the Docker network; '
+                                                        'use this argument only if bgperf can\'t '
+                                                        'determine the Linux bridge name starting from '
+                                                        'the Docker network name in case of tests of '
+                                                        'remote targets.')
+    parser_diff_prefix.add_argument('-r', '--repeat', action='store_true', help='use existing tester/monitor container')
+    parser_diff_prefix.add_argument('-f', '--file', metavar='CONFIG_FILE')
+    parser_diff_prefix.add_argument('-g', '--cooling', default=5, type=int)
+    parser_diff_prefix.add_argument('-o', '--output', metavar='STAT_FILE')
+    parser_diff_prefix.add_argument('-v', '--verbose', default=False)
+    parser_diff_prefix.add_argument('-pg', '--peer-group', action="store_true")
+    parser_diff_prefix.add_argument('-k', '--repeat-time', default=1, type=int)
+    parser_diff_prefix.add_argument('-u', '--upper-bound', default=10000, type=int)
+    parser_diff_prefix.add_argument('-b', '--lower-bound', default=1000, type=int)
+    parser_diff_prefix.add_argument('-step', '--step', default=1000, type=int)
+    add_gen_conf_args(parser_diff_prefix)
+    parser_diff_prefix.set_defaults(func=diff_prefix)
 
 
     parser_bench = s.add_parser('bench', help='run benchmarks')
@@ -852,7 +982,7 @@ if __name__ == '__main__':
     parser_bench.add_argument('-g', '--cooling', default=5, type=int)
     parser_bench.add_argument('-o', '--output', metavar='STAT_FILE')
     parser_bench.add_argument('-v', '--verbose', default=False)
-    parser_bench.add_argument('-pg', '--peer-group', default=False)
+    parser_bench.add_argument('-pg', '--peer-group', action="store_true")
     add_gen_conf_args(parser_bench)
     parser_bench.set_defaults(func=bench)
 

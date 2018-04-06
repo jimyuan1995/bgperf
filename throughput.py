@@ -29,7 +29,7 @@ class Throughput(Container):
     && rm -rf Mirage-BGP
 
     COPY --chown=opam:opam mrt-format /home/opam/mrt-format
-    COPY --chown=opam:opam Bgp4 /home/opam/Mirage-BGP
+    COPY --chown=opam:opam Bgp-tests /home/opam/Mirage-BGP
 
     RUN cd Mirage-BGP/src/perf \
     && eval `opam config env` \
@@ -107,7 +107,7 @@ class ThroughputTarget(Throughput, Target):
     def get_startup_cmd(self):
         return '\n'.join(
             ['#!/bin/bash',
-             'sudo Mirage-BGP/src/perf/perf --config {guest_dir}/{config_file_name}'
+             'sudo Mirage-BGP/src/perf/perf --config {guest_dir}/{config_file_name} -d -r 30 -m 1 -p 1'
              # 'disown -ah'
              ]
         ).format(
