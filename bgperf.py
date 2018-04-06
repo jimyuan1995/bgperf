@@ -459,6 +459,7 @@ def multitest(args):
             # intf_bridge: bridge interface that intf is already member of
             intf_bridge = intf.get_attr('IFLA_MASTER')
 
+
             # if intf is not member of the bridge, add it
             if intf_bridge not in raw_bridges:
                 if intf_bridge is None:
@@ -486,7 +487,8 @@ def multitest(args):
                     br = raw_bridges[0]
 
                     try:
-                        ip.link('set', index=idx, master=br)
+                        # ip.link('set', index=idx, master=br)
+                        print "No operation is performed here deliberately. The bridge interface detection is buggy."
                     except Exception as e:
                         print('Something went wrong: {}'.format(str(e)))
                         print('Please consider running the following command to '
