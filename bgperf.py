@@ -529,10 +529,11 @@ def multitest(args):
                 target = target_class('{0}/{1}'.format(config_dir, args.target), conf['target'])
             target.run(conf, dckr_net_name, args)
 
-            q = Queue()
-            m.stats(q)
-            if not is_remote:
-                target.stats(q)
+
+        q = Queue()
+        m.stats(q)
+        if not is_remote:
+            target.stats(q)
 
         print 'waiting bgp connection between {0} and monitor'.format(args.target)
         m.wait_established(conf['target']['local-address'])
