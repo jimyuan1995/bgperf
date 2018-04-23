@@ -618,6 +618,9 @@ def multitest(args):
             if info['who'] == m.name:
                 recved = info['state']['adj-table']['accepted'] if 'accepted' in info['state']['adj-table'] else 0
 
+                if args.verbose:
+                    print 'elapsed: {0}, cpu: {1:>4.2f}%, mem: {2}, recved: {3}'.format(elapsed, info['cpu'], mem_human(info['mem']), recved)
+
                 if info['checked'] and (not is_done):
                     print 'done'
                     is_done = True

@@ -107,7 +107,7 @@ class ThroughputTarget(Throughput, Target):
     def get_startup_cmd(self):
         return '\n'.join(
             ['#!/bin/bash',
-             'sudo Mirage-BGP/src/perf/perf --config {guest_dir}/{config_file_name} -d -r 30 -m 1 -p 1'
+             'sudo Mirage-BGP/src/perf/perf --config {guest_dir}/{config_file_name} -d -r 10 -m 500 -p 100'
              # 'disown -ah'
              ]
         ).format(
