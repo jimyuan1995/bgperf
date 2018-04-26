@@ -77,7 +77,7 @@ gobgpd -t yaml -f {1}/{2} -l {3} > {1}/gobgpd.log 2>&1
                     break
                 else:
                     info['checked'] = False
-                time.sleep(0.05)
+                time.sleep(0.5)
 
         t = Thread(target=stats)
         t.daemon = True

@@ -82,7 +82,6 @@ protocol pipe pipe_{0} {{
     {3};
     import all;
     export all;
-    rs client;
 }}
 '''.format(n['as'], self.conf['as'], n['local-address'], 'secondary' if self.conf['single-table'] else 'table table_{0}'.format(n['as']))
 

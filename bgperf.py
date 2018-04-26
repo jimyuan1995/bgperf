@@ -591,7 +591,7 @@ def multitest(args):
         count = 3
 
         while True:
-            if is_done and q.empty() and prev_cpu == 0.0:
+            if is_done and q.empty() and prev_cpu < 0.05:
                 count -= 1
             else:
                 count = 3
